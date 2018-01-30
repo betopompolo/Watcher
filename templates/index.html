@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+  <title>Watcher</title>
+
+    <!-- Bootstrap Framework -->
+  <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="../static/css/style.css">
+
+  <!-- Circliful widget -->
+  <link href="../static/css/jquery.circliful.css" rel="stylesheet" type="text/css" />
+
+  <!-- Highcharts widget -->
+  <script src="../static/js/highcharts.js"></script>
+</head>
+<body>
+  <div class="container-fluid">
+    <div class="row">
+
+      <div class="col-sm-3">
+        <h1 class="page-title">Tráfego de rede</h1>
+        <h3 class="page-subtitle">Veja os principais dados da sua rede</h3>
+      </div>
+
+      <div class="col-sm-5">
+      </div>
+
+      <div class="col-sm-2">
+        <div id="pps-indicator"></div>
+      </div>
+
+      <div class="col-sm-2">
+        <div id="ddos-indicator"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div id="net-traffic-chart"></div>
+    </div>
+  </div>
+
+  <script src="../static/js/jquery.min.js"></script>
+  <script src="../static/js/bootstrap.min.js"></script>
+
+  <script src="../static/js/jquery.circliful.min.js"></script>
+
+</body>
+
+<script>
+  var traffic_chart;
+  var is_dnn_trained = {{is_dnn_trained}};
+  var last_ddos_predict = -1;
+  var last_pps = -1;
+  var DDOS_THRESHOLD = 75;
+
+  function onStart() {
+    if (is_dnn_trained == false) {
+      if (confirm("A rede neural ainda não está treinada. Deseja treiná-la agora?")) {
+        $.ajax({
+          url: '/dnn_train',
+          success: function() { window.location.href = '/dnn_train'; },
+          failure: function() { alert("Não foi possível treinar a rede neural"); } 
+        });
+      }
+    }
+
+    // Initialize Network Traffic Chart
+    traffic_chart = Highcharts.chart('net-traffic-chart', {
+      chart: {
+        zoomType: 'x',
+        backgroundColor: 'transparent'
+      },
+      title: {
+        text: ''
+      },
+      subtitle: {
+        text: ''
+      },
+      xAxis: {
+        lineColor: "#5C5C71",
+        labels: {
+          formatter: function() {
+            return this.value.toString();
+        },
+    }
+      },
+      yAxis: {
+        title: {
+          text: 'Packets per second (PPS)'
+        },
+        gridLineColor: '#292933',
+      },
+      legend: {
+        enabled: false
+      },
+      plotOptions: {
+        area: {
+          fillColor: {
+            linearGradient: {
+              x1: 0,
+              y1: 0,
+              x2: 0,
+              y2: 1
+            },
+            stops: [
+            [0, "#00AED2"],
+            [1, Highcharts.Color("#00AED2").setOpacity(0).get('rgba')]]
+          },
+          marker: {
+            radius: 2
+          },
+          lineWidth: 1,
+          states: {
+            hover: {
+              lineWidth: 1
+            }
+          },
+          threshold: null
+        }
+      },
+
+      series: [{
+        type: 'area',
+        name: 'Packets',
+        data: {{traffic_data}}
+      }]
+    });
+    update_pps_indicator({{pps}});
+    update_ddos_indicator(0);
+    start_update_timer();
+  }
+
+  function onDDoS() { 
+    alert("Um ataque DDoS está acontecendo.");
+  }
+
+  function start_update_timer(millis=1000) {
+    setInterval(update_home, millis)
+  }
+
+  function update_home() {
+    $.getJSON('/_update_home', function(json) {
+      update_pps_indicator(json.pps);
+      update_ddos_indicator(json.ddos);
+      update_traffic_chart(json.traffic_data);
+
+      if (json.ddos >= DDOS_THRESHOLD) {
+        onDDoS();
+      }
+    });
+  }
+
+  function update_pps_indicator(pps) {
+    if (pps == null || pps == last_pps) {
+      return;
+    }
+
+    last_pps = pps;
+    
+    $('#pps-indicator').empty().removeData();
+    $("#pps-indicator").circliful({
+      animation: 0,
+      animationStep: 30,
+      foregroundColor: "#00AED2",
+      foregroundBorderWidth: 5,
+      backgroundBorderWidth: 0,
+      percent: pps,
+      percentageY: 95,
+      noPercentageSign: true,
+      text: "PPS",
+      textY: 120,
+      textStyle: 'font-size: 16px',
+      textColor: "#BDBDBD"
+    });
+  }
+
+  function update_ddos_indicator(ddos_percentage) {
+    var ddos = ddos_percentage.toFixed(2).toString().replace(".00", "");
+    var ring_color = parseInt(ddos) < DDOS_THRESHOLD ? "#00AED2" : "#D92C1C";
+
+    if (ddos_percentage == last_ddos_predict) {
+      return;
+    }
+
+    if (is_dnn_trained == false) {
+      ddos = 0;
+    }
+
+    if (ddos_percentage > 100) {
+      ddos = 100;
+    }
+
+    last_ddos_predict = ddos;
+
+    $('#ddos-indicator').empty().removeData();
+
+    $("#ddos-indicator").circliful({
+        animation: 0,
+        animationStep: 30,
+        foregroundColor: ring_color,
+        foregroundBorderWidth: 5,
+        backgroundBorderWidth: 0,
+        percent: ddos,
+        percentageY: 95,
+        progressColor: { 0: '#00AED2', 70: '#D92C1C'},
+        text: "DDoS",
+        textY: 120,
+        textStyle: 'font-size: 16px',
+        textColor: "#BDBDBD"
+      });
+  }
+
+  function update_traffic_chart(traffic_data) {
+    if (traffic_data != null)
+      traffic_chart.series[0].addPoint(traffic_data);
+  }
+
+  $( document ).ready(function() {
+    onStart();
+  });
+</script>
+</html>
